@@ -23,11 +23,15 @@ import android.widget.Toast
  *
  * ## Lifetime
  *
- * The activity does not linger. Creating it is enough to win the focus fight,
- * so it hands over to [CaptureAccessibilityService] and finishes immediately.
- * The service then captures the moment the shade leaves the window list —
- * before this app's OCR screen exists, and after the panel is gone. That is
- * what keeps both the control centre and TextGrab itself out of the picture.
+ * The activity stays on screen, fully transparent, for the whole time the
+ * panel is sliding away — if it finished immediately the panel would lose its
+ * replacement focus target and could slide back. It hands over to
+ * [CaptureAccessibilityService], waits out the collapse, and the service
+ * closes it before the screen is grabbed.
+ *
+ * Note the activity is still harmless to the capture: on this OEM it opens in
+ * a floating window, and the capture targets the app window rather than the
+ * display (see [CaptureAccessibilityService.grab]).
  */
 class CaptureProxyActivity : Activity() {
 
@@ -58,9 +62,14 @@ class CaptureProxyActivity : Activity() {
             return
         }
 
-        // Hand over, then get out of the way so the app underneath is visible
-        // again when the capture happens.
-        service.armForShadeDismissal()
+        // The service now owns the sequence: wait for the panel to finish
+        // collapsing, close this activity, capture, then open the OCR screen.
+        service.startCaptureSequence { finishSafely() }
+    }
+
+    /** Closes this activity without animation; safe to call more than once. */
+    private fun finishSafely() {
+        if (isFinishing || isDestroyed) return
         finish()
         overridePendingTransition(0, 0)
     }
