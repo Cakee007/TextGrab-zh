@@ -62,6 +62,14 @@ class MainActivity : AppCompatActivity(), SelectableOcrView.Listener {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // A capture is starting: if this screen was cold-started just to be
+        // dismissed, get out immediately without inflating any UI.
+        if (intent.action == CaptureAccessibilityService.ACTION_DISMISS) {
+            finish()
+            return
+        }
+
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
@@ -158,6 +166,12 @@ class MainActivity : AppCompatActivity(), SelectableOcrView.Listener {
     }
 
     private fun handleIntent(intent: Intent) {
+        // A capture is about to start and the screen must not contain the OCR
+        // screen left over from the previous run.
+        if (intent.action == CaptureAccessibilityService.ACTION_DISMISS) {
+            finish()
+            return
+        }
         val uri: Uri? = when (intent.action) {
             Intent.ACTION_SEND ->
                 if (Build.VERSION.SDK_INT >= 33)

@@ -25,13 +25,9 @@ import android.widget.Toast
  *
  * The activity stays on screen, fully transparent, for the whole time the
  * panel is sliding away — if it finished immediately the panel would lose its
- * replacement focus target and could slide back. It hands over to
- * [CaptureAccessibilityService], waits out the collapse, and the service
- * closes it before the screen is grabbed.
- *
- * Note the activity is still harmless to the capture: on this OEM it opens in
- * a floating window, and the capture targets the app window rather than the
- * display (see [CaptureAccessibilityService.grab]).
+ * replacement focus target and could slide back. Its `onCreate` hands control
+ * to [CaptureAccessibilityService], which closes it before the screen is
+ * captured.
  */
 class CaptureProxyActivity : Activity() {
 
@@ -62,8 +58,8 @@ class CaptureProxyActivity : Activity() {
             return
         }
 
-        // The service now owns the sequence: wait for the panel to finish
-        // collapsing, close this activity, capture, then open the OCR screen.
+        // The service owns the sequence: let the panel finish collapsing,
+        // close this activity, capture, then open the OCR screen.
         service.startCaptureSequence { finishSafely() }
     }
 

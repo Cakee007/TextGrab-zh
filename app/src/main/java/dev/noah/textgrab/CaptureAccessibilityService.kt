@@ -86,6 +86,9 @@ class CaptureAccessibilityService : AccessibilityService() {
 
         /** Gap before a capture that is not preceded by a helper activity. */
         private const val DIRECT_SETTLE_MS = 120L
+
+        /** Sent to [MainActivity] to make it close itself before a capture. */
+        const val ACTION_DISMISS = "dev.noah.textgrab.zh.action.DISMISS"
     }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -121,6 +124,13 @@ class CaptureAccessibilityService : AccessibilityService() {
         Log.d(TAG, "1/4 proxy shown, waiting for the screen to settle")
         probe = null
 
+        // Any OCR screen left over from a previous run is still in front after
+        // the user came back from it. Dismiss it by asking the app to clear its
+        // own task, so the only application window left is the app the user was
+        // reading. Without this the second capture in a row photographs
+        // TextGrab itself.
+        dismissOwnScreens()
+
         waitForStableScreen(started) { stable ->
             Log.d(TAG, "2/4 screen settled after ${System.currentTimeMillis() - started} ms")
             closeHelper()
@@ -132,6 +142,26 @@ class CaptureAccessibilityService : AccessibilityService() {
                 openMain(captured = true)
             }, HELPER_GONE_MS)
         }
+    }
+
+    /**
+     * Closes every TextGrab screen that is not the helper.
+     *
+     * [MainActivity] finishes itself in [MainActivity.onNewIntent] when this
+     * flag is set, which removes the previous OCR screen from the back stack
+     * without launching anything new.
+     */
+    private fun dismissOwnScreens() {
+        val intent = Intent(this, MainActivity::class.java).apply {
+            action = ACTION_DISMISS
+            addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP
+            )
+        }
+        runCatching { startActivity(intent) }
+            .onFailure { Log.w(TAG, "dismiss request failed", it) }
     }
 
     /**
