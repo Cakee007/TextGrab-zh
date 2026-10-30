@@ -22,7 +22,26 @@ jobs:
           java-version: '17'
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        run: |
+          # ubuntu-latest already ships the Android SDK with platform 36.
+          # Only install what is actually missing, and never fail when the
+          # package list lookup is flaky.
+          SDK="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          echo "Using SDK at $SDK"
+          SDKM="$(ls -d "$SDK"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | tail -1)"
+          echo "sdkmanager: $SDKM"
+          if [ -n "$SDKM" ]; then
+            yes 2>/dev/null | "$SDKM" --licenses > /dev/null 2>&1 || true
+            pkgs=""
+            [ -d "$SDK/platforms/android-36" ] || pkgs="$pkgs platforms;android-36"
+            [ -d "$SDK/build-tools/36.0.0" ] || pkgs="$pkgs build-tools;36.0.0"
+            if [ -n "$pkgs" ]; then
+              "$SDKM" $pkgs 2>&1 | tail -5 || true
+            fi
+          fi
+          ls "$SDK/platforms" | tail -5
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
 
       - name: Restore signing keystore
         env:
