@@ -62,6 +62,12 @@ class CaptureAccessibilityService : AccessibilityService() {
 
         /** Give up waiting for the shade to close after this long. */
         private const val ARM_TIMEOUT_MS = 1200L
+
+        /**
+         * `AccessibilityWindowInfo.TYPE_NOTIFICATION`, spelled out because the
+         * named constant only exists from API 33 and this app supports 26.
+         */
+        private const val WINDOW_TYPE_NOTIFICATION = 5
     }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -105,7 +111,7 @@ class CaptureAccessibilityService : AccessibilityService() {
     /** True while the notification shade is part of the window list. */
     private fun shadeVisible(): Boolean {
         val ws = runCatching { windows }.getOrNull() ?: return false
-        return ws.any { it.type == AccessibilityWindowInfo.TYPE_NOTIFICATION }
+        return ws.any { it.type == WINDOW_TYPE_NOTIFICATION }
     }
 
     /** True while the transparent helper activity is still on screen. */
