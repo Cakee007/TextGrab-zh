@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="intent_extract_text">提取文字</string>
+    <string name="tile_label">截屏识字</string>
+
+    <string name="home_subtitle">从任意图片中选中并复制文字。\n全程在本机完成——不联网、不依赖谷歌服务。</string>
+    <string name="home_hint">提示：把图片分享给 TextGrab，或在快捷设置里加入「截屏识字」磁贴——截屏后点一下磁贴，划选文字即可。</string>
+    <string name="pick_image">选择图片</string>
+    <string name="latest_screenshot">最新截图</string>
+
+    <string name="back">返回</string>
+    <string name="copy">复制</string>
+    <string name="copy_all">复制全部文字</string>
+    <string name="copied">已复制到剪贴板</string>
+    <string name="share">分享</string>
+    <string name="select_all">全选</string>
+    <string name="select_all_short">全选</string>
+    <string name="search_web">网页搜索</string>
+    <string name="view_as_text">按文本查看</string>
+    <string name="recognized_text">识别结果</string>
+
+    <string name="enable_instant_capture">开启一步截屏</string>
+    <string name="a11y_label">TextGrab 一步截屏</string>
+    <string name="a11y_description">让「截屏识字」磁贴自行截取屏幕，点一下磁贴就能划选文字。TextGrab 只在你点击磁贴时截屏；它不读取屏幕内容、不监听你的输入，也没有网络权限。</string>
+    <string name="capture_failed">截屏失败，改为打开最新一张截图</string>
+
+    <string name="no_text_found">这张图片里没有找到文字</string>
+    <string name="no_screenshot_found">没有找到截图</string>
+    <string name="permission_needed">打开最新截图需要相册权限</string>
+    <string name="load_failed">无法打开图片。%1$s</string>
+</resources>
