@@ -25,12 +25,6 @@
         </intent>
     </queries>
 
-    <!-- Only used by the debug capture receiver; normal protection keeps it
-         usable from adb/root without allowing other apps to hijack it. -->
-    <permission
-        android:name="dev.noah.textgrab.zh.permission.DEBUG_CAPTURE"
-        android:protectionLevel="normal" />
-
     <application
         android:name=".App"
         android:label="@string/app_name"
@@ -70,16 +64,6 @@
             android:excludeFromRecents="true"
             android:noHistory="true"
             android:theme="@style/Theme.TextGrab.Invisible" />
-
-        <!-- Debug entry point for scripted testing; not exported to other apps. -->
-        <receiver
-            android:name=".DebugCaptureReceiver"
-            android:exported="true"
-            android:permission="dev.noah.textgrab.zh.permission.DEBUG_CAPTURE">
-            <intent-filter>
-                <action android:name="dev.noah.textgrab.zh.DEBUG_CAPTURE" />
-            </intent-filter>
-        </receiver>
 
         <service
             android:name=".CaptureAccessibilityService"

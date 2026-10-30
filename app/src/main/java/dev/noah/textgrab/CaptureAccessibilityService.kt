@@ -84,9 +84,6 @@ class CaptureAccessibilityService : AccessibilityService() {
         /** Time given to the helper window to disappear after being closed. */
         private const val HELPER_GONE_MS = 30L
 
-        /** Gap before a capture that is not preceded by a helper activity. */
-        private const val DIRECT_SETTLE_MS = 120L
-
         /** Sent to [MainActivity] to make it close itself before a capture. */
         const val ACTION_DISMISS = "dev.noah.textgrab.zh.action.DISMISS"
     }
@@ -162,18 +159,6 @@ class CaptureAccessibilityService : AccessibilityService() {
         }
         runCatching { startActivity(intent) }
             .onFailure { Log.w(TAG, "dismiss request failed", it) }
-    }
-
-    /**
-     * Captures without a helper activity in front. Used by the scripted debug
-     * entry point; the tile itself goes through [CaptureProxyActivity] first.
-     */
-    @RequiresApi(31)
-    fun captureScreenAndOpen() {
-        if (pending) return
-        pending = true
-        Log.d(TAG, "capture requested (direct)")
-        handler.postDelayed({ grab() }, DIRECT_SETTLE_MS)
     }
 
     /**
