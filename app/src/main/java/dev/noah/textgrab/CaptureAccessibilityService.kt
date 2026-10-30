@@ -32,6 +32,12 @@ object CaptureHolder {
         bitmap = null
         return b
     }
+
+    /** Drops the bitmap so its pixels can be freed. */
+    @Synchronized
+    fun clear() {
+        bitmap = null
+    }
 }
 
 /**

@@ -27,6 +27,7 @@ import androidx.lifecycle.lifecycleScope
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.snackbar.Snackbar
 import dev.noah.textgrab.databinding.ActivityMainBinding
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -165,6 +166,28 @@ class MainActivity : AppCompatActivity(), SelectableOcrView.Listener {
         handleIntent(intent)
     }
 
+    /**
+     * Leaving for good removes the screenshots this session looked at.
+     *
+     * Checks `isFinishing` rather than acting in `onStop`, so switching to
+     * another app (or picking a second image) does not wipe the picture the
+     * user is still working on.
+     */
+    override fun onDestroy() {
+        val leaving = isFinishing && !isChangingConfigurations
+        currentBitmap = null
+        if (leaving) {
+            CoroutineScope(Dispatchers.IO).launch {
+                ScreenshotCleaner.releaseAll(applicationContext)
+            }
+        } else {
+            CoroutineScope(Dispatchers.IO).launch {
+                CaptureHolder.clear()
+            }
+        }
+        super.onDestroy()
+    }
+
     private fun handleIntent(intent: Intent) {
         // A capture is about to start and the screen must not contain the OCR
         // screen left over from the previous run.
@@ -215,6 +238,9 @@ class MainActivity : AppCompatActivity(), SelectableOcrView.Listener {
     // ------------------------------------------------------------- image flow
 
     private fun openImage(uri: Uri) {
+        // Gallery screenshots are real files; queue them so leaving the app
+        // removes them instead of leaving a copy behind.
+        ScreenshotCleaner.track(this, uri)
         showViewer(loading = true)
         lifecycleScope.launch {
             try {

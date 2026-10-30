@@ -87,8 +87,13 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.9.1")
     implementation("androidx.exifinterface:exifinterface:1.4.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
-    // On-device neural text recognition, model bundled in the APK — no Play Services needed.
-    // Chinese pack only: it reads 简体/繁体中文 and also handles Latin letters and digits,
-    // so mixed 中英 screenshots work without shipping the extra ~20 MB Latin model.
+    // On-device neural text recognition, models bundled in the APK — no Play
+    // Services needed.
+    //
+    // Both packs are shipped because they are not interchangeable: the Chinese
+    // pack is trained on hanzi and reads Latin/digits only as a side effect,
+    // while the Latin pack is the accurate one for numbers, English and
+    // symbols. OcrEngine decides per region which pack to use.
     implementation("com.google.mlkit:text-recognition-chinese:16.0.1")
+    implementation("com.google.mlkit:text-recognition:16.0.1")
 }
