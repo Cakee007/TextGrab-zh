@@ -183,13 +183,15 @@ class MainActivity : AppCompatActivity(), SelectableOcrView.Listener {
                 // Reached when the accessibility service could not take the
                 // screenshot itself. Tell the user why, instead of silently
                 // opening whatever image happens to be newest in the gallery.
-                Snackbar.make(
+                val bar = Snackbar.make(
                     binding.root,
                     R.string.capture_unavailable,
                     Snackbar.LENGTH_LONG
-                ).setAction(R.string.capture_unavailable_action) {
+                )
+                bar.setAction(R.string.capture_unavailable_action) {
                     openAccessibilitySettings()
-                }.show()
+                }
+                bar.show()
                 showHome()
             }
             else -> showHome()

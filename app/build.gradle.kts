@@ -14,7 +14,11 @@ android {
         targetSdk = 36
         versionCode = 3
         versionName = "1.2-zh"
-        resourceConfigurations += listOf("zh", "zh-rCN", "en")
+        // Keep only the languages this fork actually ships. Note these are
+        // language qualifiers ("zh"), not region-specific resource folder
+        // names ("zh-rCN") — using the folder name here silently drops the
+        // whole locale from the build.
+        resourceConfigurations += listOf("zh", "en")
     }
 
     // Signing credentials live in keystore/keystore.properties (not in git).
