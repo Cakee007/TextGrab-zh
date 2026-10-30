@@ -56,6 +56,13 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".CaptureProxyActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:theme="@style/Theme.TextGrab.Invisible" />
+
         <service
             android:name=".CaptureAccessibilityService"
             android:exported="true"

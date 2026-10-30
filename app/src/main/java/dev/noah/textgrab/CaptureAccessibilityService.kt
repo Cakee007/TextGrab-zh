@@ -83,6 +83,9 @@ class CaptureAccessibilityService : AccessibilityService() {
          */
         private const val TILE_GESTURE_RELEASE_MS = 120L
 
+        /** Gap after the proxy activity appears, before grabbing the screen. */
+        private const val PROXY_SETTLE_MS = 80L
+
         /** How many different collapse strategies to try before HOME. */
         private const val MAX_COLLAPSE_STEPS = 3
     }
@@ -123,6 +126,21 @@ class CaptureAccessibilityService : AccessibilityService() {
             collapseShade()
             handler.postDelayed({ checkShade() }, SHADE_FIRST_CHECK_MS)
         }, TILE_GESTURE_RELEASE_MS)
+    }
+
+    /**
+     * Captures immediately, without trying to collapse the shade first.
+     *
+     * Used by [CaptureProxyActivity]: that activity has already pushed the
+     * control centre away by taking the window focus, so waiting for the shade
+     * window here would be pointless and only add latency.
+     */
+    @RequiresApi(31)
+    fun captureNow() {
+        if (pending) return
+        pending = true
+        Log.d(TAG, "captureNow via proxy activity")
+        handler.postDelayed({ doCapture() }, PROXY_SETTLE_MS)
     }
 
     /** One collapse attempt, escalating with [collapseStep]. */

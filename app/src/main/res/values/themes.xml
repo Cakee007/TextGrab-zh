@@ -6,6 +6,17 @@
         <item name="android:navigationBarColor">@android:color/transparent</item>
     </style>
 
+    <!-- Fully transparent, no animation: used only to push the notification
+         shade away for a fraction of a second before the screen is captured. -->
+    <style name="Theme.TextGrab.Invisible" parent="android:Theme.Translucent.NoTitleBar">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowAnimationStyle">@null</item>
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:windowDisablePreview">true</item>
+    </style>
+
     <style name="ViewerIconButton">
         <item name="android:layout_width">48dp</item>
         <item name="android:layout_height">48dp</item>
