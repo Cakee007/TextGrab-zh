@@ -71,6 +71,9 @@ class CaptureAccessibilityService : AccessibilityService() {
          */
         private const val WINDOW_TYPE_NOTIFICATION = 5
 
+        /** Logs every system window's visibility while waiting for the shade. */
+        private const val SHADE_TRACE = true
+
         /** How often the window list is polled while waiting for the shade. */
         private const val SHADE_POLL_MS = 25L
 
@@ -164,10 +167,42 @@ class CaptureAccessibilityService : AccessibilityService() {
         handler.postDelayed({ waitForShadeGone(started, then) }, SHADE_POLL_MS)
     }
 
-    /** True while the notification shade is part of the window list. */
+    /**
+     * True while the notification shade is on screen and visible.
+     *
+     * The shade window is never destroyed when it closes — it stays in the
+     * window list and is merely made invisible (`mViewVisibility=0x4`, i.e.
+     * `View.GONE`). Checking membership of the list alone therefore reported
+     * "already collapsed" the instant it was opened, and the capture grabbed
+     * the control centre. What matters is visibility:
+     *
+     * - [AccessibilityWindowInfo.isActive] / focus are not reliable here;
+     * - the shade reports itself as `TYPE_SYSTEM` on this platform and also
+     *   exposes `isVisibleToUser`, which covers both cases.
+     */
     private fun shadeVisible(): Boolean {
         val ws = runCatching { windows }.getOrNull() ?: return false
-        return ws.any { it.type == WINDOW_TYPE_NOTIFICATION }
+        val metrics = resources.displayMetrics
+        var result = false
+        for (w in ws) {
+            if (w.type != AccessibilityWindowInfo.TYPE_SYSTEM &&
+                w.type != WINDOW_TYPE_NOTIFICATION
+            ) {
+                continue
+            }
+            val b = Rect()
+            w.getBoundsInScreen(b)
+            // The shade spans the full width and starts at the very top; the
+            // bars are either thin or anchored to the bottom.
+            val fullWidth = b.width() >= metrics.widthPixels * 9 / 10 && b.top <= 0
+            val tall = b.height() >= metrics.heightPixels / 4
+            val visible = fullWidth && tall && w.isVisibleToUser
+            if (SHADE_TRACE) {
+                Log.d(TAG, "system window id=${w.id} ${b.toShortString()} vis=${w.isVisibleToUser} counts=$visible")
+            }
+            if (visible) result = true
+        }
+        return result
     }
 
     /** Grabs the app window the user is looking at, then opens the OCR UI. */
