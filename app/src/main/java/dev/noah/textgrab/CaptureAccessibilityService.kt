@@ -44,13 +44,13 @@ object CaptureHolder {
  * 1. **[CaptureProxyActivity] is created.** It takes the window focus, which
  *    is what makes the control centre start collapsing. The tile itself cannot
  *    do that on this OEM.
- * 2. **Wait for the panel to be fully gone.** [shadeVisible] polls the window
- *    list until the notification shade is no longer part of it, plus a short
- *    settle delay so the closing animation has finished. There is a hard
- *    deadline so a panel that never reports itself can't stall the flow.
+ * 2. **Wait until the picture stops changing.** [waitForStableScreen] keeps
+ *    screenshotting and compares consecutive frames. The panel closing is an
+ *    animation, so the frames differ while it runs and match once it has
+ *    finished. This is the one signal that does not depend on how a given OEM
+ *    reports window state, which is where earlier attempts went wrong.
  * 3. **Close the helper window**, so nothing of ours is on screen.
- * 4. **Capture.** A single window, picked as the largest application window
- *    that is not ours.
+ * 4. **Keep the settled frame** — it was captured after the panel was gone.
  * 5. **Only then** start [MainActivity] with the bitmap in hand.
  *
  * No step starts before the previous one has demonstrably finished, and the
@@ -65,23 +65,21 @@ class CaptureAccessibilityService : AccessibilityService() {
         var instance: CaptureAccessibilityService? = null
             private set
 
+        /** Gap between stability probes while the panel collapses. */
+        private const val PROBE_INTERVAL_MS = 40L
+
+        /** Give up waiting for a stable picture after this long. */
+        private const val STABLE_DEADLINE_MS = 2000L
+
+        /** Pixels compared across a frame, per axis. */
+        private const val GRID = 48
+
         /**
-         * `AccessibilityWindowInfo.TYPE_NOTIFICATION`, spelled out because the
-         * named constant only exists from API 33 and this app supports 26.
+         * Fraction of sampled pixels allowed to differ between two frames that
+         * still count as "the same picture". Small enough to catch motion,
+         * large enough to ignore a status-bar clock tick.
          */
-        private const val WINDOW_TYPE_NOTIFICATION = 5
-
-        /** Logs every system window's visibility while waiting for the shade. */
-        private const val SHADE_TRACE = true
-
-        /** How often the window list is polled while waiting for the shade. */
-        private const val SHADE_POLL_MS = 25L
-
-        /** Longest time spent waiting for the shade before going ahead anyway. */
-        private const val SHADE_DEADLINE_MS = 1500L
-
-        /** Settle time after the shade is gone, to let the animation finish. */
-        private const val SHADE_SETTLE_MS = 60L
+        private const val STABLE_TOLERANCE = 0.01f
 
         /** Time given to the helper window to disappear after being closed. */
         private const val HELPER_GONE_MS = 30L
@@ -120,17 +118,18 @@ class CaptureAccessibilityService : AccessibilityService() {
         if (pending) return
         pending = true
         val started = System.currentTimeMillis()
-        Log.d(TAG, "1/4 proxy shown, waiting for shade to close")
+        Log.d(TAG, "1/4 proxy shown, waiting for the screen to settle")
+        probe = null
 
-        waitForShadeGone(started) {
-            Log.d(TAG, "2/4 shade gone after ${System.currentTimeMillis() - started} ms")
+        waitForStableScreen(started) { stable ->
+            Log.d(TAG, "2/4 screen settled after ${System.currentTimeMillis() - started} ms")
             closeHelper()
 
-            // Give the window manager a moment to actually drop the helper
-            // window before grabbing, so nothing of ours can be in frame.
             handler.postDelayed({
-                Log.d(TAG, "3/4 capturing")
-                grab()
+                Log.d(TAG, "3/4 delivering the settled frame")
+                pending = false
+                CaptureHolder.put(stable)
+                openMain(captured = true)
             }, HELPER_GONE_MS)
         }
     }
@@ -148,61 +147,98 @@ class CaptureAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * Polls until the notification shade has left the window list.
+     * Waits until the on-screen picture has stopped changing, then hands over.
      *
-     * Polling rather than reacting to an event keeps the sequence linear: the
-     * callback fires exactly once, either when the shade is gone or when the
-     * deadline expires, whichever comes first.
+     * Window bookkeeping is not reliable enough here: the shade stays in the
+     * window list when it closes, and different OEM skins report its bounds,
+     * activeness and visibility inconsistently. What is unambiguous is the
+     * pixels. Collapsing the panel is an animation, so successive frames
+     * differ until it has finished; once two frames in a row are identical the
+     * panel is unquestionably gone and nothing is still moving.
+     *
+     * Each probe is a real screenshot, so the frame that finally gets kept is
+     * the one that was just proven stable.
      */
-    private fun waitForShadeGone(started: Long, then: () -> Unit) {
-        if (!shadeVisible()) {
-            handler.postDelayed(then, SHADE_SETTLE_MS)
+    private fun waitForStableScreen(started: Long, then: (Bitmap) -> Unit) {
+        if (Build.VERSION.SDK_INT < 31) return
+        if (System.currentTimeMillis() - started > STABLE_DEADLINE_MS) {
+            Log.w(TAG, "screen never settled in ${STABLE_DEADLINE_MS} ms, capturing now")
+            grab()
             return
         }
-        if (System.currentTimeMillis() - started >= SHADE_DEADLINE_MS) {
-            Log.w(TAG, "shade still reported after ${SHADE_DEADLINE_MS} ms, continuing")
-            then()
-            return
-        }
-        handler.postDelayed({ waitForShadeGone(started, then) }, SHADE_POLL_MS)
+
+        takeScreenshot(
+            Display.DEFAULT_DISPLAY,
+            mainExecutor,
+            object : TakeScreenshotCallback {
+                override fun onSuccess(result: ScreenshotResult) {
+                    val bitmap = toSoftware(result)
+                    if (bitmap == null) {
+                        grab()
+                        return
+                    }
+                    val previous = probe
+                    probe = bitmap
+
+                    if (previous != null && sameFrame(previous, bitmap)) {
+                        Log.d(
+                            TAG,
+                            "screen stable after ${System.currentTimeMillis() - started} ms"
+                        )
+                        then(bitmap)
+                    } else {
+                        handler.postDelayed(
+                            { waitForStableScreen(started, then) },
+                            PROBE_INTERVAL_MS
+                        )
+                    }
+                }
+
+                override fun onFailure(errorCode: Int) {
+                    Log.w(TAG, "probe failed ($errorCode)")
+                    handler.postDelayed(
+                        { waitForStableScreen(started, then) },
+                        PROBE_INTERVAL_MS
+                    )
+                }
+            }
+        )
     }
 
+    /** Last probe frame, kept to compare against the next one. */
+    private var probe: Bitmap? = null
+
     /**
-     * True while the notification shade is on screen and visible.
-     *
-     * The shade window is never destroyed when it closes — it stays in the
-     * window list and is merely made invisible (`mViewVisibility=0x4`, i.e.
-     * `View.GONE`). Checking membership of the list alone therefore reported
-     * "already collapsed" the instant it was opened, and the capture grabbed
-     * the control centre. What matters is visibility:
-     *
-     * - [AccessibilityWindowInfo.isActive] / focus are not reliable here;
-     * - the shade reports itself as `TYPE_SYSTEM` on this platform and also
-     *   exposes `isVisibleToUser`, which covers both cases.
+     * Cheap frame comparison: samples a coarse grid of pixels instead of
+     * comparing every byte, which is enough to tell a moving animation from a
+     * settled screen and costs next to nothing.
      */
-    private fun shadeVisible(): Boolean {
-        val ws = runCatching { windows }.getOrNull() ?: return false
-        val metrics = resources.displayMetrics
-        var result = false
-        for (w in ws) {
-            if (w.type != AccessibilityWindowInfo.TYPE_SYSTEM &&
-                w.type != WINDOW_TYPE_NOTIFICATION
-            ) {
-                continue
+    private fun sameFrame(a: Bitmap, b: Bitmap): Boolean {
+        if (a.width != b.width || a.height != b.height) return false
+        val stepX = (a.width / GRID).coerceAtLeast(1)
+        val stepY = (a.height / GRID).coerceAtLeast(1)
+        var differing = 0
+        var sampled = 0
+        var y = 0
+        while (y < a.height) {
+            var x = 0
+            while (x < a.width) {
+                sampled++
+                if (a.getPixel(x, y) != b.getPixel(x, y)) differing++
+                x += stepX
             }
-            val b = Rect()
-            w.getBoundsInScreen(b)
-            // The shade spans the full width and starts at the very top; the
-            // bars are either thin or anchored to the bottom.
-            val fullWidth = b.width() >= metrics.widthPixels * 9 / 10 && b.top <= 0
-            val tall = b.height() >= metrics.heightPixels / 4
-            val visible = fullWidth && tall && w.isVisibleToUser()
-            if (SHADE_TRACE) {
-                Log.d(TAG, "system window id=${w.id} ${b.toShortString()} vis=${w.isVisibleToUser()} counts=$visible")
-            }
-            if (visible) result = true
+            y += stepY
         }
-        return result
+        val ratio = differing.toFloat() / sampled.coerceAtLeast(1)
+        return ratio < STABLE_TOLERANCE
+    }
+
+    @RequiresApi(31)
+    private fun toSoftware(result: ScreenshotResult): Bitmap? {
+        val hardware = Bitmap.wrapHardwareBuffer(result.hardwareBuffer, result.colorSpace)
+        val software = hardware?.copy(Bitmap.Config.ARGB_8888, false)
+        result.hardwareBuffer.close()
+        return software
     }
 
     /** Grabs the app window the user is looking at, then opens the OCR UI. */
