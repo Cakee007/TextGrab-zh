@@ -1,7 +1,6 @@
 package dev.noah.textgrab
 
 import android.accessibilityservice.AccessibilityService
-import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Rect
@@ -14,7 +13,6 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityWindowInfo
 import android.widget.Toast
 import androidx.annotation.RequiresApi
-import java.lang.reflect.Method
 
 /**
  * Hands a freshly captured screen bitmap from the accessibility service
@@ -37,29 +35,24 @@ object CaptureHolder {
 }
 
 /**
- * Screenshot-only accessibility service. Lets the quick-settings tile capture
- * the current screen by itself, so "tile tap -> selectable text" needs no
- * manual screenshot first.
+ * Screenshot-only accessibility service.
  *
- * ## Getting rid of the control centre is the hard part
+ * ## Why the capture is window-targeted
  *
- * On several OEM skins — ColorOS is one of them — a tile's onClick runs while
- * the panel still owns the gesture, and
- * GLOBAL_ACTION_DISMISS_NOTIFICATION_SHADE issued from there is silently
- * ignored. The result is a screenshot of the control centre, no matter how
- * long the capture is delayed.
+ * ColorOS opens a newly launched activity in a floating window when it is
+ * started from another app. That breaks the obvious design: a helper activity
+ * meant to shove the notification shade aside ends up *inside* the screenshot
+ * as a little floating copy of this app, stacked over the app the user wanted
+ * to read.
  *
- * So the collapse is attempted on three levels, cheapest first:
+ * Instead of fighting the compositor, the capture targets one window:
  *
- * 1. `statusbar collapse` through the hidden IStatusBarService (root-independent
- *    reflection, works on most builds, and is the one that actually lands on
- *    ColorOS);
- * 2. the accessibility global action;
- * 3. HOME as a last resort — it always leaves the shade and shows the app the
- *    user was in, which is what they wanted to capture anyway.
+ * - [takeScreenshotOfWindow] (API 34+) grabs a single window's content, so
+ *   floating windows, the shade and our own helper never appear in it;
+ * - on older versions it falls back to a full-display capture.
  *
- * Each attempt is followed by a poll of the shade window bounds, so we only
- * proceed once the panel is really gone. Nothing on screen is read.
+ * The window is chosen as the largest visible application window that is not
+ * ours and not the system UI, which is the app the user was looking at.
  */
 class CaptureAccessibilityService : AccessibilityService() {
 
@@ -70,30 +63,15 @@ class CaptureAccessibilityService : AccessibilityService() {
         var instance: CaptureAccessibilityService? = null
             private set
 
-        private const val SHADE_POLL_MS = 50L
-        private const val SHADE_FIRST_CHECK_MS = 100L
-        private const val SHADE_MAX_WAIT_MS = 1500L
-        private const val SETTLE_MS = 180L
-        private const val SHADE_MIN_VISIBLE_HEIGHT_PX = 32
+        /** Wait for a freshly launched proxy activity to settle. */
+        private const val PROXY_SETTLE_MS = 150L
 
-        /**
-         * Gap between the tile tap and the first collapse attempt. The system
-         * swallows global actions fired inside a tile's onClick while the
-         * gesture is still being delivered.
-         */
-        private const val TILE_GESTURE_RELEASE_MS = 120L
-
-        /** Gap after the proxy activity appears, before grabbing the screen. */
-        private const val PROXY_SETTLE_MS = 80L
-
-        /** How many different collapse strategies to try before HOME. */
-        private const val MAX_COLLAPSE_STEPS = 3
+        /** Wait before a direct capture when no proxy activity is involved. */
+        private const val DIRECT_SETTLE_MS = 120L
     }
 
     private val handler = Handler(Looper.getMainLooper())
     private var pending = false
-    private var waitedMs = 0L
-    private var collapseStep = 0
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -110,191 +88,125 @@ class CaptureAccessibilityService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) = Unit
     override fun onInterrupt() = Unit
 
+    /**
+     * Captures the window the user is actually looking at, without collapsing
+     * anything first. Called straight from the tile.
+     */
     @RequiresApi(31)
     fun captureScreenAndOpen() {
         if (pending) return
         pending = true
-        waitedMs = 0L
-        collapseStep = 0
-        Log.d(TAG, "capture requested")
-
-        // The tile's onClick still owns the input gesture at this point, and
-        // the system ignores global actions issued inside it — that is why the
-        // panel used to stay open. Post the first collapse outside the
-        // callback so the gesture has been released.
-        handler.postDelayed({
-            collapseShade()
-            handler.postDelayed({ checkShade() }, SHADE_FIRST_CHECK_MS)
-        }, TILE_GESTURE_RELEASE_MS)
+        Log.d(TAG, "capture requested (direct)")
+        handler.postDelayed({ doCapture() }, DIRECT_SETTLE_MS)
     }
 
     /**
-     * Captures immediately, without trying to collapse the shade first.
-     *
-     * Used by [CaptureProxyActivity]: that activity has already pushed the
-     * control centre away by taking the window focus, so waiting for the shade
-     * window here would be pointless and only add latency.
+     * Captures after the helper activity has covered the control centre.
+     * The helper never shows up in the result because the capture is aimed at
+     * a specific window rather than the whole display.
      */
     @RequiresApi(31)
     fun captureNow() {
         if (pending) return
         pending = true
-        Log.d(TAG, "captureNow via proxy activity")
+        Log.d(TAG, "capture requested (via proxy)")
         handler.postDelayed({ doCapture() }, PROXY_SETTLE_MS)
-    }
-
-    /** One collapse attempt, escalating with [collapseStep]. */
-    private fun collapseShade() {
-        when (collapseStep) {
-            0 -> {
-                val ok = collapseViaStatusBarService()
-                Log.d(TAG, "collapse via IStatusBarService: $ok")
-            }
-            1 -> {
-                val ok = performGlobalAction(GLOBAL_ACTION_DISMISS_NOTIFICATION_SHADE)
-                Log.d(TAG, "collapse via global action: $ok")
-            }
-            else -> {
-                Log.d(TAG, "collapse fallback: HOME")
-                performGlobalAction(GLOBAL_ACTION_HOME)
-            }
-        }
-        collapseStep++
-    }
-    private fun checkShade() {
-        if (!pending) return
-        waitedMs += SHADE_POLL_MS
-
-        if (shadeStillUp()) {
-            if (waitedMs < SHADE_MAX_WAIT_MS) {
-                handler.postDelayed({ checkShade() }, SHADE_POLL_MS)
-                return
-            }
-            // Panel refuses to leave: escalate to the next strategy.
-            if (collapseStep < MAX_COLLAPSE_STEPS) {
-                Log.d(TAG, "shade still up after ${waitedMs}ms, escalating")
-                waitedMs = 0L
-                collapseShade()
-                handler.postDelayed({ checkShade() }, SHADE_FIRST_CHECK_MS)
-                return
-            }
-            Log.w(TAG, "shade still up after all strategies, capturing anyway")
-        }
-
-        handler.postDelayed({ doCapture() }, SETTLE_MS)
-    }
-
-    /**
-     * Collapses the shade through the system status bar service.
-     *
-     * Two routes are tried, in order of reliability on locked-down OEM skins:
-     *
-     * 1. `service call statusbar` as root. This is the same call the system
-     *    makes for its own collapse, so ColorOS cannot ignore it. Only used
-     *    when the device is rooted — Silently skipped otherwise.
-     * 2. Reflection into StatusBarManager. Works on stock Android and is
-     *    permission-gated on newer OEM builds.
-     */
-    private fun collapseViaStatusBarService(): Boolean {
-        if (collapseViaRoot()) return true
-
-        val attempts = listOf(
-            "android.app.StatusBarManager" to "collapsePanels",
-            "android.app.StatusBarManager" to "collapsePanel",
-        )
-        for ((cls, method) in attempts) {
-            try {
-                val c = Class.forName(cls)
-                val getter = c.getMethod("getService", Context::class.java)
-                val service = getter.invoke(null, this) ?: continue
-                val m: Method = c.getDeclaredMethod(method)
-                m.isAccessible = true
-                m.invoke(service)
-                return true
-            } catch (t: Throwable) {
-                Log.d(TAG, "$cls.$method unavailable: ${t.javaClass.simpleName}")
-            }
-        }
-        return false
-    }
-
-    /**
-     * Collapses the shade via `cmd statusbar collapse` run as root.
-     *
-     * Only attempted once the user has granted this app root, which is why the
-     * call is wrapped so tightly: an unrooted device, or a user who declines,
-     * must fall through to the next strategy without stalling the capture.
-     */
-    private fun collapseViaRoot(): Boolean {
-        return try {
-            val p = ProcessBuilder("su", "-c", "cmd statusbar collapse")
-                .redirectErrorStream(true)
-                .start()
-            val done = p.waitFor()
-            Log.d(TAG, "root collapse exit=$done")
-            done == 0
-        } catch (t: Throwable) {
-            Log.d(TAG, "root collapse unavailable: ${t.javaClass.simpleName}")
-            false
-        }
-    }
-
-    /** True while the notification shade still covers part of the screen. */
-    private fun shadeStillUp(): Boolean {
-        val ws = runCatching { windows }.getOrNull() ?: return false
-        val screenW = resources.displayMetrics.widthPixels
-        for (w in ws) {
-            if (!isShadeWindow(w, screenW)) continue
-            val b = Rect()
-            w.getBoundsInScreen(b)
-            if (b.height() > SHADE_MIN_VISIBLE_HEIGHT_PX) return true
-        }
-        return false
-    }
-
-    /**
-     * The shade is a full-width system window anchored at the top. Detected by
-     * shape rather than TYPE_NOTIFICATION_SHADE, which only exists from API 33
-     * while this app supports API 26.
-     */
-    private fun isShadeWindow(w: AccessibilityWindowInfo, screenW: Int): Boolean {
-        if (w.type != AccessibilityWindowInfo.TYPE_SYSTEM) return false
-        val b = Rect()
-        w.getBoundsInScreen(b)
-        return b.top <= 0 && b.width() >= screenW * 9 / 10
     }
 
     @RequiresApi(31)
     private fun doCapture() {
-        Log.d(TAG, "taking screenshot")
+        val target = primaryWindow()
+
+        if (Build.VERSION.SDK_INT >= 34 && target != null) {
+            Log.d(TAG, "capturing window id=${target.id} type=${target.type}")
+            takeScreenshotOfWindow(
+                target.id,
+                mainExecutor,
+                object : TakeScreenshotCallback {
+                    override fun onSuccess(result: ScreenshotResult) = deliver(result)
+                    override fun onFailure(errorCode: Int) {
+                        Log.w(TAG, "window capture failed ($errorCode), trying display")
+                        captureDisplay()
+                    }
+                }
+            )
+            return
+        }
+        captureDisplay()
+    }
+
+    @RequiresApi(31)
+    private fun captureDisplay() {
+        Log.d(TAG, "capturing full display")
         takeScreenshot(
             Display.DEFAULT_DISPLAY,
             mainExecutor,
             object : TakeScreenshotCallback {
-                override fun onSuccess(result: ScreenshotResult) {
-                    val hardware = Bitmap.wrapHardwareBuffer(
-                        result.hardwareBuffer, result.colorSpace
-                    )
-                    val software = hardware?.copy(Bitmap.Config.ARGB_8888, false)
-                    result.hardwareBuffer.close()
-                    pending = false
-
-                    if (software != null) {
-                        Log.d(TAG, "screenshot ok ${software.width}x${software.height}")
-                        CaptureHolder.put(software)
-                        openMain(captured = true)
-                    } else {
-                        Log.w(TAG, "screenshot null bitmap")
-                        fallback()
-                    }
-                }
-
+                override fun onSuccess(result: ScreenshotResult) = deliver(result)
                 override fun onFailure(errorCode: Int) {
-                    Log.w(TAG, "screenshot failed, errorCode=$errorCode")
+                    Log.w(TAG, "display capture failed, errorCode=$errorCode")
                     fallback()
                 }
             }
         )
+    }
+
+    @RequiresApi(31)
+    private fun deliver(result: ScreenshotResult) {
+        val hardware = Bitmap.wrapHardwareBuffer(result.hardwareBuffer, result.colorSpace)
+        // ML Kit and our overlay need CPU-accessible pixels.
+        val software = hardware?.copy(Bitmap.Config.ARGB_8888, false)
+        result.hardwareBuffer.close()
+        pending = false
+
+        if (software != null) {
+            Log.d(TAG, "captured ${software.width}x${software.height}")
+            CaptureHolder.put(software)
+            openMain(captured = true)
+        } else {
+            fallback()
+        }
+    }
+
+    /**
+     * Picks the window worth capturing: the largest application window that is
+     * not ours.
+     *
+     * Only TYPE_APPLICATION windows qualify, so the notification shade and
+     * system overlays are excluded by construction. Our own helper activity is
+     * filtered out by package name.
+     */
+    private fun primaryWindow(): AccessibilityWindowInfo? {
+        val ws = runCatching { windows }.getOrNull() ?: return null
+        var best: AccessibilityWindowInfo? = null
+        var bestArea = 0
+
+        for (w in ws) {
+            if (w.type != AccessibilityWindowInfo.TYPE_APPLICATION) continue
+            if (isOwnWindow(w)) continue
+
+            val b = Rect()
+            w.getBoundsInScreen(b)
+            val area = b.width() * b.height()
+            if (area > bestArea) {
+                bestArea = area
+                best = w
+            }
+        }
+        return best
+    }
+
+    /**
+     * True for windows produced by this app, including the transparent helper.
+     *
+     * Window titles are not reliable across apps, so the check asks the node
+     * tree for its root package. This is the only place the service touches
+     * window content, and it reads a package name only — never text.
+     */
+    private fun isOwnWindow(w: AccessibilityWindowInfo): Boolean {
+        val root = runCatching { w.root }.getOrNull() ?: return false
+        return runCatching { root.packageName?.toString() == packageName }
+            .getOrDefault(false)
     }
 
     private fun fallback() {
