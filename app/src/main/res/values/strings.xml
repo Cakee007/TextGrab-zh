@@ -24,6 +24,8 @@
     <string name="a11y_label">TextGrab instant capture</string>
     <string name="a11y_description">Lets the OCR screenshot tile capture the screen by itself, so one tap on the tile is enough. TextGrab only takes a screenshot when you tap the tile. It does not read screen content, does not observe your input and has no internet access.</string>
     <string name="capture_failed">Screen capture failed, opening latest screenshot instead</string>
+    <string name="capture_unavailable">Screenshot capture is not enabled, so the screen cannot be grabbed automatically</string>
+    <string name="capture_unavailable_action">Enable</string>
 
     <string name="no_text_found">No text found in this image</string>
     <string name="no_screenshot_found">No screenshot found</string>
