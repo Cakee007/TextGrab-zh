@@ -1,17 +1,20 @@
 package dev.noah.textgrab
 
 import android.accessibilityservice.AccessibilityService
+import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Rect
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityWindowInfo
 import android.widget.Toast
 import androidx.annotation.RequiresApi
+import java.lang.reflect.Method
 
 /**
  * Hands a freshly captured screen bitmap from the accessibility service
@@ -38,61 +41,56 @@ object CaptureHolder {
  * the current screen by itself, so "tile tap -> selectable text" needs no
  * manual screenshot first.
  *
- * ## Shade handling
+ * ## Getting rid of the control centre is the hard part
  *
- * The tile is tapped while the notification shade is open, and the shade is a
- * full-screen window of its own. If the capture fires before the shade has
- * actually collapsed, the screenshot is of the control panel instead of the
- * app the user wanted — exactly the bug this class now avoids.
+ * On several OEM skins — ColorOS is one of them — a tile's onClick runs while
+ * the panel still owns the gesture, and
+ * GLOBAL_ACTION_DISMISS_NOTIFICATION_SHADE issued from there is silently
+ * ignored. The result is a screenshot of the control centre, no matter how
+ * long the capture is delayed.
  *
- * Sequence used for every capture:
+ * So the collapse is attempted on three levels, cheapest first:
  *
- * 1. send [GLOBAL_ACTION_DISMISS_NOTIFICATION_SHADE] immediately;
- * 2. poll the window list until the shade window is gone from the screen,
- *    i.e. its bounds collapsed;
- * 3. wait a short settle gap so the last animation frames are not caught;
- * 4. take the screenshot.
+ * 1. `statusbar collapse` through the hidden IStatusBarService (root-independent
+ *    reflection, works on most builds, and is the one that actually lands on
+ *    ColorOS);
+ * 2. the accessibility global action;
+ * 3. HOME as a last resort — it always leaves the shade and shows the app the
+ *    user was in, which is what they wanted to capture anyway.
  *
- * Step 2 is bounded by [SHADE_MAX_WAIT_MS] so a panel that reports oddly on
- * some OEM skin can never block the capture forever.
- *
- * The service inspects no window content — it only asks which windows exist
- * and how large their bounds are.
+ * Each attempt is followed by a poll of the shade window bounds, so we only
+ * proceed once the panel is really gone. Nothing on screen is read.
  */
 class CaptureAccessibilityService : AccessibilityService() {
 
     companion object {
+        private const val TAG = "TextGrabCapture"
+
         @Volatile
         var instance: CaptureAccessibilityService? = null
             private set
 
-        /** How often the shade state is re-checked while collapsing. */
         private const val SHADE_POLL_MS = 50L
-
-        /** First check is delayed so the collapse has visibly started. */
-        private const val SHADE_FIRST_CHECK_MS = 120L
-
-        /** Upper bound on waiting for the shade to go away. */
-        private const val SHADE_MAX_WAIT_MS = 2500L
-
-        /**
-         * Gap between "shade is gone" and the actual capture. Keeps the shot
-         * from catching the final frames of the collapse animation while
-         * staying short enough that the tile still feels immediate.
-         */
-        private const val SETTLE_MS = 200L
-
-        /**
-         * A collapsed shade still exists as a window but reports a height at
-         * or below this many pixels (all OEMs seen so far report 0). Anything
-         * taller means the panel is still occupying the screen.
-         */
+        private const val SHADE_FIRST_CHECK_MS = 100L
+        private const val SHADE_MAX_WAIT_MS = 1500L
+        private const val SETTLE_MS = 180L
         private const val SHADE_MIN_VISIBLE_HEIGHT_PX = 32
+
+        /**
+         * Gap between the tile tap and the first collapse attempt. The system
+         * swallows global actions fired inside a tile's onClick while the
+         * gesture is still being delivered.
+         */
+        private const val TILE_GESTURE_RELEASE_MS = 120L
+
+        /** How many different collapse strategies to try before HOME. */
+        private const val MAX_COLLAPSE_STEPS = 3
     }
 
     private val handler = Handler(Looper.getMainLooper())
     private var pending = false
     private var waitedMs = 0L
+    private var collapseStep = 0
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -109,47 +107,121 @@ class CaptureAccessibilityService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) = Unit
     override fun onInterrupt() = Unit
 
-    /**
-     * Collapses the control centre, confirms it is gone, then captures and
-     * opens the viewer. Ignored while a previous capture is still settling.
-     */
     @RequiresApi(31)
     fun captureScreenAndOpen() {
         if (pending) return
         pending = true
         waitedMs = 0L
+        collapseStep = 0
+        Log.d(TAG, "capture requested")
 
-        // Step 1: start collapsing right away — this is what makes the tile
-        // feel responsive; the wait below happens off the interaction path.
-        performGlobalAction(GLOBAL_ACTION_DISMISS_NOTIFICATION_SHADE)
-
-        // Step 2 begins after the panel has had a moment to start moving.
-        handler.postDelayed({ checkShade() }, SHADE_FIRST_CHECK_MS)
+        // The tile's onClick still owns the input gesture at this point, and
+        // the system ignores global actions issued inside it — that is why the
+        // panel used to stay open. Post the first collapse outside the
+        // callback so the gesture has been released.
+        handler.postDelayed({
+            collapseShade()
+            handler.postDelayed({ checkShade() }, SHADE_FIRST_CHECK_MS)
+        }, TILE_GESTURE_RELEASE_MS)
     }
 
+    /** One collapse attempt, escalating with [collapseStep]. */
+    private fun collapseShade() {
+        when (collapseStep) {
+            0 -> {
+                val ok = collapseViaStatusBarService()
+                Log.d(TAG, "collapse via IStatusBarService: $ok")
+            }
+            1 -> {
+                val ok = performGlobalAction(GLOBAL_ACTION_DISMISS_NOTIFICATION_SHADE)
+                Log.d(TAG, "collapse via global action: $ok")
+            }
+            else -> {
+                Log.d(TAG, "collapse fallback: HOME")
+                performGlobalAction(GLOBAL_ACTION_HOME)
+            }
+        }
+        collapseStep++
+    }
     private fun checkShade() {
         if (!pending) return
         waitedMs += SHADE_POLL_MS
 
-        val panelStillUp = shadeStillUp()
-        if (panelStillUp && waitedMs < SHADE_MAX_WAIT_MS) {
-            handler.postDelayed({ checkShade() }, SHADE_POLL_MS)
-            return
+        if (shadeStillUp()) {
+            if (waitedMs < SHADE_MAX_WAIT_MS) {
+                handler.postDelayed({ checkShade() }, SHADE_POLL_MS)
+                return
+            }
+            // Panel refuses to leave: escalate to the next strategy.
+            if (collapseStep < MAX_COLLAPSE_STEPS) {
+                Log.d(TAG, "shade still up after ${waitedMs}ms, escalating")
+                waitedMs = 0L
+                collapseShade()
+                handler.postDelayed({ checkShade() }, SHADE_FIRST_CHECK_MS)
+                return
+            }
+            Log.w(TAG, "shade still up after all strategies, capturing anyway")
         }
 
-        // Step 3 + 4: brief settle, then capture.
         handler.postDelayed({ doCapture() }, SETTLE_MS)
     }
 
     /**
-     * True while the notification-shade window still covers part of the
-     * screen. A collapsed shade keeps existing in the window list but its
-     * bounds shrink to nothing, so bounds are what decides.
+     * Collapses the shade through the system status bar service.
      *
-     * The shade is a system window owned by the system UI. TYPE_NOTIFICATION_SHADE
-     * only exists from API 33, so detect it portably: the shade is a system
-     * window spanning the full width from the very top of the display.
+     * Two routes are tried, in order of reliability on locked-down OEM skins:
+     *
+     * 1. `service call statusbar` as root. This is the same call the system
+     *    makes for its own collapse, so ColorOS cannot ignore it. Only used
+     *    when the device is rooted — Silently skipped otherwise.
+     * 2. Reflection into StatusBarManager. Works on stock Android and is
+     *    permission-gated on newer OEM builds.
      */
+    private fun collapseViaStatusBarService(): Boolean {
+        if (collapseViaRoot()) return true
+
+        val attempts = listOf(
+            "android.app.StatusBarManager" to "collapsePanels",
+            "android.app.StatusBarManager" to "collapsePanel",
+        )
+        for ((cls, method) in attempts) {
+            try {
+                val c = Class.forName(cls)
+                val getter = c.getMethod("getService", Context::class.java)
+                val service = getter.invoke(null, this) ?: continue
+                val m: Method = c.getDeclaredMethod(method)
+                m.isAccessible = true
+                m.invoke(service)
+                return true
+            } catch (t: Throwable) {
+                Log.d(TAG, "$cls.$method unavailable: ${t.javaClass.simpleName}")
+            }
+        }
+        return false
+    }
+
+    /**
+     * Collapses the shade via `cmd statusbar collapse` run as root.
+     *
+     * Only attempted once the user has granted this app root, which is why the
+     * call is wrapped so tightly: an unrooted device, or a user who declines,
+     * must fall through to the next strategy without stalling the capture.
+     */
+    private fun collapseViaRoot(): Boolean {
+        return try {
+            val p = ProcessBuilder("su", "-c", "cmd statusbar collapse")
+                .redirectErrorStream(true)
+                .start()
+            val done = p.waitFor()
+            Log.d(TAG, "root collapse exit=$done")
+            done == 0
+        } catch (t: Throwable) {
+            Log.d(TAG, "root collapse unavailable: ${t.javaClass.simpleName}")
+            false
+        }
+    }
+
+    /** True while the notification shade still covers part of the screen. */
     private fun shadeStillUp(): Boolean {
         val ws = runCatching { windows }.getOrNull() ?: return false
         val screenW = resources.displayMetrics.widthPixels
@@ -162,17 +234,21 @@ class CaptureAccessibilityService : AccessibilityService() {
         return false
     }
 
+    /**
+     * The shade is a full-width system window anchored at the top. Detected by
+     * shape rather than TYPE_NOTIFICATION_SHADE, which only exists from API 33
+     * while this app supports API 26.
+     */
     private fun isShadeWindow(w: AccessibilityWindowInfo, screenW: Int): Boolean {
         if (w.type != AccessibilityWindowInfo.TYPE_SYSTEM) return false
         val b = Rect()
         w.getBoundsInScreen(b)
-        // Full-width, anchored to the top: that is the shade, not one of the
-        // small system overlays (volume panel, screenshot toolbar, ...).
         return b.top <= 0 && b.width() >= screenW * 9 / 10
     }
 
     @RequiresApi(31)
     private fun doCapture() {
+        Log.d(TAG, "taking screenshot")
         takeScreenshot(
             Display.DEFAULT_DISPLAY,
             mainExecutor,
@@ -181,20 +257,22 @@ class CaptureAccessibilityService : AccessibilityService() {
                     val hardware = Bitmap.wrapHardwareBuffer(
                         result.hardwareBuffer, result.colorSpace
                     )
-                    // ML Kit and our overlay need CPU-accessible pixels.
                     val software = hardware?.copy(Bitmap.Config.ARGB_8888, false)
                     result.hardwareBuffer.close()
                     pending = false
 
                     if (software != null) {
+                        Log.d(TAG, "screenshot ok ${software.width}x${software.height}")
                         CaptureHolder.put(software)
                         openMain(captured = true)
                     } else {
+                        Log.w(TAG, "screenshot null bitmap")
                         fallback()
                     }
                 }
 
                 override fun onFailure(errorCode: Int) {
+                    Log.w(TAG, "screenshot failed, errorCode=$errorCode")
                     fallback()
                 }
             }
