@@ -23,6 +23,8 @@
     <string name="a11y_label">TextGrab 一步截屏</string>
     <string name="a11y_description">让「截屏识字」磁贴自行截取屏幕，点一下磁贴就能划选文字。TextGrab 只在你点击磁贴时截屏；它不读取屏幕内容、不监听你的输入，也没有网络权限。</string>
     <string name="capture_failed">截屏失败，改为打开最新一张截图</string>
+    <string name="capture_unavailable">截屏服务未启用，无法自动截屏</string>
+    <string name="capture_unavailable_action">去开启</string>
 
     <string name="no_text_found">这张图片里没有找到文字</string>
     <string name="no_screenshot_found">没有找到截图</string>

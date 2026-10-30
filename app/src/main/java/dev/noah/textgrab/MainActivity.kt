@@ -82,11 +82,7 @@ class MainActivity : AppCompatActivity(), SelectableOcrView.Listener {
             pickImage.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
         }
         binding.btnScreenshot.setOnClickListener { requestScreenshotOcr() }
-        binding.btnEnableCapture.setOnClickListener {
-            runCatching {
-                startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS))
-            }
-        }
+        binding.btnEnableCapture.setOnClickListener { openAccessibilitySettings() }
 
         binding.btnBack.setOnClickListener { onBackFromViewer() }
         binding.btnSelectAll.setOnClickListener { binding.ocrView.selectAll() }
@@ -140,6 +136,21 @@ class MainActivity : AppCompatActivity(), SelectableOcrView.Listener {
         }
     }
 
+    /** Jumps straight to this app's accessibility entry where possible. */
+    private fun openAccessibilitySettings() {
+        val direct = Intent("android.settings.ACCESSIBILITY_DETAILS_SETTINGS").apply {
+            putExtra(
+                "android.provider.extra.ACCESSIBILITY_SERVICE_COMPONENT_NAME",
+                "$packageName/${CaptureAccessibilityService::class.java.name}"
+            )
+        }
+        runCatching { startActivity(direct) }.onFailure {
+            runCatching {
+                startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            }
+        }
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
@@ -169,7 +180,17 @@ class MainActivity : AppCompatActivity(), SelectableOcrView.Listener {
             }
             intent.getBooleanExtra(EXTRA_LATEST_SCREENSHOT, false) -> {
                 launchedWithImage = true
-                requestScreenshotOcr()
+                // Reached when the accessibility service could not take the
+                // screenshot itself. Tell the user why, instead of silently
+                // opening whatever image happens to be newest in the gallery.
+                Snackbar.make(
+                    binding.root,
+                    R.string.capture_unavailable,
+                    Snackbar.LENGTH_LONG
+                ).setAction(R.string.capture_unavailable_action) {
+                    openAccessibilitySettings()
+                }.show()
+                showHome()
             }
             else -> showHome()
         }
