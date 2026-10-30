@@ -1,34 +1,41 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    These are the *default* resources, i.e. what the app shows for every
+    locale it has no translation for. This fork is Chinese-only by design
+    (the recogniser is the Chinese ML Kit model), so the defaults are written
+    in Chinese. That also makes the tile label and every UI string Chinese
+    regardless of the system language, instead of falling back to English.
+-->
 <resources>
     <string name="app_name" translatable="false">TextGrab</string>
-    <string name="intent_extract_text">Extract text</string>
-    <string name="tile_label">OCR screenshot</string>
+    <string name="intent_extract_text">提取文字</string>
+    <string name="tile_label">截屏识字</string>
 
-    <string name="home_subtitle">Select and copy text from any image.\nEverything runs on this device — no internet, no Google services.</string>
-    <string name="home_hint">Tip: share any image to TextGrab, or add the "OCR screenshot" tile to your quick settings — take a screenshot, tap the tile, select the text.</string>
-    <string name="pick_image">Choose image</string>
-    <string name="latest_screenshot">Latest screenshot</string>
+    <string name="home_subtitle">从任意图片中选中并复制文字。\n全程在本机完成——不联网、不依赖谷歌服务。</string>
+    <string name="home_hint">提示：把图片分享给 TextGrab，或在快捷设置里加入「截屏识字」磁贴——截屏后点一下磁贴，划选文字即可。</string>
+    <string name="pick_image">选择图片</string>
+    <string name="latest_screenshot">最新截图</string>
 
-    <string name="back">Back</string>
-    <string name="copy">Copy</string>
-    <string name="copy_all">Copy all text</string>
-    <string name="copied">Copied to clipboard</string>
-    <string name="share">Share</string>
-    <string name="select_all">Select all</string>
-    <string name="select_all_short">All</string>
-    <string name="search_web">Search the web</string>
-    <string name="view_as_text">View as text</string>
-    <string name="recognized_text">Recognized text</string>
+    <string name="back">返回</string>
+    <string name="copy">复制</string>
+    <string name="copy_all">复制全部文字</string>
+    <string name="copied">已复制到剪贴板</string>
+    <string name="share">分享</string>
+    <string name="select_all">全选</string>
+    <string name="select_all_short">全选</string>
+    <string name="search_web">网页搜索</string>
+    <string name="view_as_text">按文本查看</string>
+    <string name="recognized_text">识别结果</string>
 
-    <string name="enable_instant_capture">Enable instant capture</string>
-    <string name="a11y_label">TextGrab instant capture</string>
-    <string name="a11y_description">Lets the OCR screenshot tile capture the screen by itself, so one tap on the tile is enough. TextGrab only takes a screenshot when you tap the tile. It does not read screen content, does not observe your input and has no internet access.</string>
-    <string name="capture_failed">Screen capture failed, opening latest screenshot instead</string>
-    <string name="capture_unavailable">Screenshot capture is not enabled, so the screen cannot be grabbed automatically</string>
-    <string name="capture_unavailable_action">Enable</string>
+    <string name="enable_instant_capture">开启一步截屏</string>
+    <string name="a11y_label">TextGrab 一步截屏</string>
+    <string name="a11y_description">让「截屏识字」磁贴自行截取屏幕，点一下磁贴就能划选文字。TextGrab 只在你点击磁贴时截屏；它不读取屏幕内容、不监听你的输入，也没有网络权限。</string>
+    <string name="capture_failed">截屏失败，改为打开最新一张截图</string>
+    <string name="capture_unavailable">截屏服务未启用，无法自动截屏</string>
+    <string name="capture_unavailable_action">去开启</string>
 
-    <string name="no_text_found">No text found in this image</string>
-    <string name="no_screenshot_found">No screenshot found</string>
-    <string name="permission_needed">Photo access is needed to open your latest screenshot</string>
-    <string name="load_failed">Could not open image. %1$s</string>
+    <string name="no_text_found">这张图片里没有找到文字</string>
+    <string name="no_screenshot_found">没有找到截图</string>
+    <string name="permission_needed">需要照片权限才能打开最新截图</string>
+    <string name="load_failed">图片打不开。%1$s</string>
 </resources>

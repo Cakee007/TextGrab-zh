@@ -57,15 +57,18 @@ class CaptureAccessibilityService : AccessibilityService() {
         var instance: CaptureAccessibilityService? = null
             private set
 
-        /** Gap after the helper activity appears, before grabbing the screen. */
-        private const val PROXY_SETTLE_MS = 80L
-
         /** Gap before a capture that is not preceded by a helper activity. */
         private const val DIRECT_SETTLE_MS = 120L
+
+        /** Give up waiting for the shade to close after this long. */
+        private const val ARM_TIMEOUT_MS = 1200L
     }
 
     private val handler = Handler(Looper.getMainLooper())
     private var pending = false
+
+    /** Waiting for the shade to leave the window list. */
+    private var armed = false
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -76,10 +79,41 @@ class CaptureAccessibilityService : AccessibilityService() {
         instance = null
         handler.removeCallbacksAndMessages(null)
         pending = false
+        armed = false
         super.onDestroy()
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) = Unit
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (event == null || !armed) return
+        val type = event.eventType
+        if (type != AccessibilityEvent.TYPE_WINDOWS_CHANGED &&
+            type != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+        ) {
+            return
+        }
+
+        // The shade has left the window list: this is the first instant the
+        // app underneath is visible again, and the last one before anything of
+        // ours could cover it. Capture right here.
+        if (!shadeVisible() && !helperOnScreen()) {
+            armed = false
+            Log.d(TAG, "shade gone, capturing event=${event.eventType}")
+            grab()
+        }
+    }
+
+    /** True while the notification shade is part of the window list. */
+    private fun shadeVisible(): Boolean {
+        val ws = runCatching { windows }.getOrNull() ?: return false
+        return ws.any { it.type == AccessibilityWindowInfo.TYPE_NOTIFICATION }
+    }
+
+    /** True while the transparent helper activity is still on screen. */
+    private fun helperOnScreen(): Boolean {
+        val ws = runCatching { windows }.getOrNull() ?: return false
+        return ws.any { it.type == AccessibilityWindowInfo.TYPE_APPLICATION && isOwnWindow(it) }
+    }
+
     override fun onInterrupt() = Unit
 
     /**
@@ -91,24 +125,40 @@ class CaptureAccessibilityService : AccessibilityService() {
         if (pending) return
         pending = true
         Log.d(TAG, "capture requested (direct)")
-        handler.postDelayed({ doCapture() }, DIRECT_SETTLE_MS)
+        handler.postDelayed({ grab() }, DIRECT_SETTLE_MS)
     }
 
     /**
-     * Captures after [CaptureProxyActivity] has pushed the control centre
-     * away. The helper never shows up in the result because the capture is
-     * aimed at a specific window rather than the whole display.
+     * Starts the chain that ends with a capture of the unobstructed app.
+     *
+     * [CaptureProxyActivity] calls this as soon as it is created, i.e. while
+     * the control centre is still on screen. This service then waits for the
+     * window list to stop containing the shade — immediately before it would
+     * slide back — and only then grabs the screen. Capturing on that event is
+     * what keeps the result free of our own UI: the OCR screen is started only
+     * after the bitmap is in memory.
      */
     @RequiresApi(31)
-    fun captureNow() {
+    fun armForShadeDismissal() {
         if (pending) return
         pending = true
-        Log.d(TAG, "capture requested (via proxy)")
-        handler.postDelayed({ doCapture() }, PROXY_SETTLE_MS)
+        armed = true
+        Log.d(TAG, "armed, waiting for shade to close")
+        handler.postDelayed({ onArmTimeout() }, ARM_TIMEOUT_MS)
     }
 
+    /** Fallback for skins that do not report the shade as a window. */
     @RequiresApi(31)
-    private fun doCapture() {
+    private fun onArmTimeout() {
+        if (!armed) return
+        armed = false
+        Log.w(TAG, "shade never reported closed, capturing anyway")
+        grab()
+    }
+
+    /** Grabs the app window the user is looking at, then opens the OCR UI. */
+    @RequiresApi(31)
+    private fun grab() {
         val target = primaryWindow()
         Log.d(TAG, "windows: " + runCatching { windows }.getOrNull()?.joinToString(" | ") { w ->
             val r = Rect()
@@ -118,7 +168,7 @@ class CaptureAccessibilityService : AccessibilityService() {
         })
 
         if (Build.VERSION.SDK_INT >= 34 && target != null) {
-            Log.d(TAG, "capturing window id=${target.id} type=${target.type} looper=main")
+            Log.d(TAG, "capturing window id=${target.id} type=${target.type}")
             takeScreenshotOfWindow(
                 target.id,
                 mainExecutor,

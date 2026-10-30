@@ -18,6 +18,10 @@ android {
         // language qualifiers ("zh"), not region-specific resource folder
         // names ("zh-rCN") — using the folder name here silently drops the
         // whole locale from the build.
+        //
+        // The defaults in values/ are Chinese too, so the app stays Chinese
+        // whatever the system language is; values-en keeps an English build
+        // possible for anyone who wants it.
         resourceConfigurations += listOf("zh", "en")
     }
 
