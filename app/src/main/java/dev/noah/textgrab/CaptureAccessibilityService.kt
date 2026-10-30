@@ -196,9 +196,9 @@ class CaptureAccessibilityService : AccessibilityService() {
             // bars are either thin or anchored to the bottom.
             val fullWidth = b.width() >= metrics.widthPixels * 9 / 10 && b.top <= 0
             val tall = b.height() >= metrics.heightPixels / 4
-            val visible = fullWidth && tall && w.isVisibleToUser
+            val visible = fullWidth && tall && w.isVisibleToUser()
             if (SHADE_TRACE) {
-                Log.d(TAG, "system window id=${w.id} ${b.toShortString()} vis=${w.isVisibleToUser} counts=$visible")
+                Log.d(TAG, "system window id=${w.id} ${b.toShortString()} vis=${w.isVisibleToUser()} counts=$visible")
             }
             if (visible) result = true
         }
