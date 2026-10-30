@@ -62,6 +62,15 @@
             </intent-filter>
         </activity>
 
+        <!-- Transparent helper that pushes the control centre away before a
+             capture; see CaptureProxyActivity for why this is necessary. -->
+        <activity
+            android:name=".CaptureProxyActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:theme="@style/Theme.TextGrab.Invisible" />
+
         <!-- Debug entry point for scripted testing; not exported to other apps. -->
         <receiver
             android:name=".DebugCaptureReceiver"

@@ -37,22 +37,16 @@ object CaptureHolder {
 /**
  * Screenshot-only accessibility service.
  *
- * ## Why the capture is window-targeted
+ * ## How a tile tap turns into text
  *
- * ColorOS opens a newly launched activity in a floating window when it is
- * started from another app. That breaks the obvious design: a helper activity
- * meant to shove the notification shade aside ends up *inside* the screenshot
- * as a little floating copy of this app, stacked over the app the user wanted
- * to read.
- *
- * Instead of fighting the compositor, the capture targets one window:
- *
- * - [takeScreenshotOfWindow] (API 34+) grabs a single window's content, so
- *   floating windows, the shade and our own helper never appear in it;
- * - on older versions it falls back to a full-display capture.
- *
- * The window is chosen as the largest visible application window that is not
- * ours and not the system UI, which is the app the user was looking at.
+ * 1. The tile starts [CaptureProxyActivity]. That activity is what actually
+ *    dismisses the control centre; see its documentation for why nothing
+ *    else works on this OEM.
+ * 2. Once the panel is gone the activity asks this service for a capture.
+ * 3. The capture targets a single window rather than the whole display, so
+ *    the helper, the shade and anything else floating around stay out of the
+ *    picture.
+ * 4. The bitmap goes straight to [MainActivity] in memory.
  */
 class CaptureAccessibilityService : AccessibilityService() {
 
@@ -63,10 +57,10 @@ class CaptureAccessibilityService : AccessibilityService() {
         var instance: CaptureAccessibilityService? = null
             private set
 
-        /** Wait for a freshly launched proxy activity to settle. */
-        private const val PROXY_SETTLE_MS = 150L
+        /** Gap after the helper activity appears, before grabbing the screen. */
+        private const val PROXY_SETTLE_MS = 80L
 
-        /** Wait before a direct capture when no proxy activity is involved. */
+        /** Gap before a capture that is not preceded by a helper activity. */
         private const val DIRECT_SETTLE_MS = 120L
     }
 
@@ -89,8 +83,8 @@ class CaptureAccessibilityService : AccessibilityService() {
     override fun onInterrupt() = Unit
 
     /**
-     * Captures the window the user is actually looking at, without collapsing
-     * anything first. Called straight from the tile.
+     * Captures without a helper activity in front. Used by the scripted debug
+     * entry point; the tile itself goes through [CaptureProxyActivity] first.
      */
     @RequiresApi(31)
     fun captureScreenAndOpen() {
@@ -101,9 +95,9 @@ class CaptureAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * Captures after the helper activity has covered the control centre.
-     * The helper never shows up in the result because the capture is aimed at
-     * a specific window rather than the whole display.
+     * Captures after [CaptureProxyActivity] has pushed the control centre
+     * away. The helper never shows up in the result because the capture is
+     * aimed at a specific window rather than the whole display.
      */
     @RequiresApi(31)
     fun captureNow() {
@@ -116,9 +110,15 @@ class CaptureAccessibilityService : AccessibilityService() {
     @RequiresApi(31)
     private fun doCapture() {
         val target = primaryWindow()
+        Log.d(TAG, "windows: " + runCatching { windows }.getOrNull()?.joinToString(" | ") { w ->
+            val r = Rect()
+            w.getBoundsInScreen(r)
+            val pkg = runCatching { w.root?.packageName?.toString() }.getOrNull()
+            "id=${w.id} type=${w.type} active=${w.isActive} focus=${w.isFocused} pkg=$pkg ${r.toShortString()}"
+        })
 
         if (Build.VERSION.SDK_INT >= 34 && target != null) {
-            Log.d(TAG, "capturing window id=${target.id} type=${target.type}")
+            Log.d(TAG, "capturing window id=${target.id} type=${target.type} looper=main")
             takeScreenshotOfWindow(
                 target.id,
                 mainExecutor,
@@ -137,7 +137,7 @@ class CaptureAccessibilityService : AccessibilityService() {
 
     @RequiresApi(31)
     private fun captureDisplay() {
-        Log.d(TAG, "capturing full display")
+        Log.d(TAG, "capturing full display looper=main")
         takeScreenshot(
             Display.DEFAULT_DISPLAY,
             mainExecutor,
