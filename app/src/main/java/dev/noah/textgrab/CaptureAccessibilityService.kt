@@ -145,16 +145,30 @@ class CaptureAccessibilityService : AccessibilityService() {
      * True while the notification-shade window still covers part of the
      * screen. A collapsed shade keeps existing in the window list but its
      * bounds shrink to nothing, so bounds are what decides.
+     *
+     * The shade is a system window owned by the system UI. TYPE_NOTIFICATION_SHADE
+     * only exists from API 33, so detect it portably: the shade is a system
+     * window spanning the full width from the very top of the display.
      */
     private fun shadeStillUp(): Boolean {
         val ws = runCatching { windows }.getOrNull() ?: return false
+        val screenW = resources.displayMetrics.widthPixels
         for (w in ws) {
-            if (w.type != AccessibilityWindowInfo.TYPE_NOTIFICATION_SHADE) continue
+            if (!isShadeWindow(w, screenW)) continue
             val b = Rect()
             w.getBoundsInScreen(b)
             if (b.height() > SHADE_MIN_VISIBLE_HEIGHT_PX) return true
         }
         return false
+    }
+
+    private fun isShadeWindow(w: AccessibilityWindowInfo, screenW: Int): Boolean {
+        if (w.type != AccessibilityWindowInfo.TYPE_SYSTEM) return false
+        val b = Rect()
+        w.getBoundsInScreen(b)
+        // Full-width, anchored to the top: that is the shade, not one of the
+        // small system overlays (volume panel, screenshot toolbar, ...).
+        return b.top <= 0 && b.width() >= screenW * 9 / 10
     }
 
     @RequiresApi(31)
