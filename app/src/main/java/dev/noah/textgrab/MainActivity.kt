@@ -87,6 +87,12 @@ class MainActivity : AppCompatActivity(), SelectableOcrView.Listener {
 
         binding.ocrView.listener = this
 
+        // Ask for the notification permission once, so the keep-alive service
+        // can show its (silent) notification and is not killed for it.
+        if (Build.VERSION.SDK_INT >= 33) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 77)
+        }
+
         binding.btnPick.setOnClickListener {
             pickImage.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
         }

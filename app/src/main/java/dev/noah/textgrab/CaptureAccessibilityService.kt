@@ -100,6 +100,11 @@ class CaptureAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+        // The binding only exists while the process is alive, and OEM freezers
+        // drop it once the app goes idle. A foreground service keeps the
+        // process exempt from that, so the user does not have to re-enable the
+        // permission after every long pause.
+        KeepAliveService.start(this)
     }
 
     override fun onDestroy() {

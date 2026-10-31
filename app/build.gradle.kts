@@ -12,8 +12,8 @@ android {
         applicationId = "dev.noah.textgrab.zh"
         minSdk = 26
         targetSdk = 36
-        versionCode = 4
-        versionName = "1.3-zh"
+        versionCode = 5
+        versionName = "1.4-zh"
         // Keep only the languages this fork actually ships. Note these are
         // language qualifiers ("zh"), not region-specific resource folder
         // names ("zh-rCN") — using the folder name here silently drops the

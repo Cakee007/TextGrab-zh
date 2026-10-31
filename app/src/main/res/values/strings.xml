@@ -38,4 +38,8 @@
     <string name="no_screenshot_found">没有找到截图</string>
     <string name="permission_needed">需要照片权限才能打开最新截图</string>
     <string name="load_failed">图片打不开。%1$s</string>
+    <string name="keepalive_title">截屏识字已就绪</string>
+    <string name="keepalive_text">保持运行，磁贴随时可用</string>
+    <string name="keepalive_channel">常驻运行</string>
+    <string name="keepalive_channel_desc">常驻通知，避免系统转入后台时关闭无障碍服务</string>
 </resources>

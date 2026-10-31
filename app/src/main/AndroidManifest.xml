@@ -14,6 +14,12 @@
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
 
+    <!-- Keeps the process out of the OEM's freezer so the accessibility
+         service is not revoked while the app sits idle. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <!-- Needed to resolve web-search / browser handlers on Android 11+ -->
     <queries>
         <intent>
@@ -64,6 +70,19 @@
             android:excludeFromRecents="true"
             android:noHistory="true"
             android:theme="@style/Theme.TextGrab.Invisible" />
+
+        <!-- Keeps the process out of the OEM freezer; see KeepAliveService.
+             The specialUse type only exists from API 34, so it is applied to
+             that version range and left off below it. -->
+        <service
+            android:name=".KeepAliveService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            tools:targetApi="34">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps the accessibility service bound so the screenshot tile stays available" />
+        </service>
 
         <service
             android:name=".CaptureAccessibilityService"
