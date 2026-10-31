@@ -4,6 +4,7 @@
 针对中文、ColorOS 与日常使用场景做了大量改造。
 
 **本仓库：** <https://github.com/Cakee007/TextGrab-zh>
+**作者 GitHub：** <https://github.com/Cakee007>
 **上游原版：** <https://github.com/notune/TextGrab>
 
 ---
