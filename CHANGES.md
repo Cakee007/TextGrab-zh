@@ -1,71 +1,94 @@
-# TextGrab 中文版（截屏识字）
+## 1.4-zh —— 精度、清理与保活
 
-基于 [notune/TextGrab](https://github.com/notune/TextGrab) v1.1（MIT）修改的本地版本，
-目标：控制中心一个磁贴 → 截屏 → 划选复制，且**支持中文**。
+本版解决三件事：识别精度、退出后不留图、无障碍被系统冻掉。
 
-## 相对于上游的改动
+### 识别精度：补上拉丁模型
 
-| 文件 | 改动 |
-|---|---|
-| `app/build.gradle.kts` | `applicationId` 改为 `dev.noah.textgrab.zh`（可与原版共存安装）；版本 `1.2-zh`；依赖从 `text-recognition`（拉丁）换成 `text-recognition-chinese:16.0.1`（仅中文模型，含拉丁字母与数字识别）；启用 CI 环境变量签名 |
-| `app/src/main/java/dev/noah/textgrab/OcrEngine.kt` | 识别器换为 `ChineseTextRecognizerOptions`；拼字逻辑增加 CJK 边界判断，中文之间不插空格，中英之间保留空格 |
-| `app/src/main/java/dev/noah/textgrab/MainActivity.kt` | `processBitmap` 加异常兜底，识别出错时退出加载态并提示，而不是卡住 |
-| `app/src/main/res/values-zh-rCN/strings.xml` | 新增简体中文字符串，磁贴名称改为「截屏识字」 |
-| `.github/workflows/build.yml` | GitHub Actions 云编译，签名后上传 APK |
+先确认了一个事实：参考项目 `CashewTeam/BigBang_NovaText` 用的识别引擎与我们**完全相同** ——
+`com.google.mlkit:text-recognition-chinese:16.0.1`，创建方式也一致。不存在"更强的版本"。
 
-## 使用前提
+真正的差距在两处，都已补上：
 
-- Android 8.0（API 26）及以上；**磁贴自动截屏需要 Android 12+**（无障碍截屏 API）。
-- Android 12 以下仍可用：先按音量减+电源截屏，再点磁贴读取最新截图。
+1. **拉丁模型。** 上游只装中文模型。中文模型按汉字训练，读数字和字母是附带能力，
+   实测错得明显。现在同时打包 `com.google.mlkit:text-recognition:16.0.1`，
+   同一张图跑两遍，按行择优：
+   - 含汉字的行 → 取中文模型
+   - 纯数字 / 字母 / 符号的行 → 比较两边，取更合理的
+   - 两个模型按行重叠度（> 0.5）匹配
 
-## 编译（GitHub Actions）
+   两个模型共用同一套检测管线，APK 里 `Hani_ctc`（汉字）与 `Latn_ctc`（拉丁）并存，
+   体积没有翻倍。
 
-1. 在 GitHub 新建一个空仓库，把本目录推上去（推 `main` 分支）。
-2. 生成签名 keystore（本地执行一次，妥善保存，后续升级必须同一把）：
-   ```sh
-   keytool -genkeypair -v -keystore release.jks -alias textgrab \
-     -keyalg RSA -keysize 2048 -validity 10000
-   ```
-3. 把 keystore 转成 base64 并写入仓库 Secrets：
-   ```sh
-   base64 -w0 release.jks > release.jks.b64
-   ```
-   Secrets 需要四项：
-   - `SIGNING_KEY_BASE64` → `release.jks.b64` 的内容
-   - `SIGNING_STORE_PASSWORD`
-   - `SIGNING_KEY_ALIAS`（示例中是 `textgrab`）
-   - `SIGNING_KEY_PASSWORD`
-4. 进入 Actions 页面，选择 **Build APK** → **Run workflow**。
-5. 构建完成后在 Artifacts 下载 `TextGrab-zh-apk`，装到手机上。
+2. **长边约束。** 送模型前若长边超过 2048，先做双线性缩放，识别完成后把几何坐标
+   映射回原图。不缩放的话长截图会被模型内部降采样，**整行丢失**。
 
-> 没有配置 Secrets 也能跑，只是产出的是 debug 包（无需签名即可安装，但不可作为正式分发）。
+划选逻辑一行未动，仍是原来的纯视觉方案。
 
-## 安装后的一次性设置
+合并时修掉一个缺陷：原来用 `indexOfFirst` 嵌套 `indexOf` 查行，重复行会被反复匹配；
+改为按索引遍历。
 
-1. 先打开一次 TextGrab 中文版，允许相册权限（读取最新截图用）。
-2. 点主页的 **「开启一步截屏」**，在系统无障碍列表里启用 `TextGrab 一步截屏`。
-   它只在点磁贴时截屏，不读屏幕内容、不监听输入、无网络权限。
-3. 下拉控制中心 → 编辑（铅笔）→ 把 **「截屏识字」** 磁贴拖进常用区。
+### 退出清理
 
-## 日常使用
+先说清楚一件事：**磁贴截的图从不进相册**，它只在内存里，直接交给界面显示。
+所以对这一条路径，退出时只是释放位图，本来就没有文件残留。
 
-- 任意界面下拉 → 点「截屏识字」→ 手指划选文字 → 复制，自动回原 App。
-- 也可从任意 App「分享图片」给本应用，或从文件管理器「打开方式」选它。
+真正需要删的是另一类：用户在应用内通过「最新截图」或「选择图片」打开的相册图片。
+这些是真实文件，现在会在退出时通过 MediaStore 删除：
 
-## 已知限制
+```kotlin
+context.contentResolver.delete(uri, null, null)
+```
 
-- 只内置中文模型：对简体/繁体中文效果最好，拉丁字母和数字也能识别，但纯德/法/越南语等带特殊变音符的文本精度不如原版的拉丁模型。
-- APK 体积约 45–50 MB（模型约 20 MB）。
-- 无障碍截屏在部分厂商 ROM（如某些 MIUI / EMUI 版本）可能被系统限制，此时会回退到打开最新截图。
+Android 11+ 上这个操作会**进相册回收站保留 30 天**，不是直接抹掉。
+只对 MediaStore 里有条目的图片生效，其他应用私有的 content URI 不去碰。
 
-## 1.3-zh —— 截屏链路的最终实现
+时机用 `isFinishing && !isChangingConfigurations` 判断，所以切到别的应用、
+或者换一张图都不会误删。
 
-经过多轮实测，ColorOS 上有三个坑，最后的解法都不是"猜时间"，而是把每一步做成可验证的状态：
+### 无障碍保活
 
-1. **控制中心收不回去。** 磁贴回调里任何收起手段都被吞掉（`startActivityAndCollapse`、无障碍全局动作、`su -c "cmd statusbar collapse"`）。唯一有效的是一个获得焦点的窗口——透明 Activity 一出现，面板必然被顶走。
-2. **截到的是控制中心。** 系统报告"面板已关闭"完全不可信：窗口不会从列表里消失，类型报成 `SYSTEM`，边界和激活状态也不变。改为**逐帧比像素**：每 40ms 截一帧，两帧一致即说明收起动画结束，留下的那帧必然不含控制中心。
-3. **第二次用就套娃。** 上一次的文字选择界面还留在前台，被当成截屏目标。现在序列开头先发一次关闭请求，让 `MainActivity` 自行退出，系统里只剩目标应用。
+**现象：** 隔久了（尤其一晚上）再用，无障碍已经被系统关掉，磁贴只会提示去开启。
 
-最终顺序（每一步都等上一步完成）：点磁贴 → 透明 Activity 抢焦点 → 关闭残留界面 → 逐帧等待画面稳定 → 关闭透明 Activity → 交付稳定帧 → 打开文字界面。
+**根因：** ColorOS 会冻结闲置应用。进程一被冻结，无障碍绑定随之断开，
+系统就把这一项从启用列表里摘掉。这不是应用崩溃，是纯粹的省电策略。
 
-另外：R8 资源压缩会把 manifest 里的 label 在编译期内联，所以磁贴名改成在 manifest 里直接写中文；默认资源（`values/`）也一并改为中文，避免系统语言不匹配时回退到英文。
+**解法：** `KeepAliveService`，一个 `specialUse` 类型的前台服务，
+在无障碍服务 `onServiceConnected` 时启动，显示一条最小重要性的静音通知。
+
+```xml
+<service
+    android:name=".KeepAliveService"
+    android:exported="false"
+    android:foregroundServiceType="specialUse"
+    tools:targetApi="34">
+```
+
+它没有定时器、没有 wakelock、没有网络、没有轮询，存在本身就是目的 ——
+让进程免于冻结。通知图标单独做了 `ic_stat_ready.xml`：纯白描边，
+不用主题属性，因为通知栏小图标会被系统当透明度蒙版处理，用了 `?attr/`
+会显示成空白。
+
+Android 13+ 首次进入主界面时申请一次通知权限。
+
+### 顺带修正
+
+- `values/strings.xml` 直接写成中文，不依赖系统语言匹配 `zh-rCN`
+- 版本号 5 / `1.4-zh`
+- 新增 `README.md`（原先是上游原文，未反映本分支的改动）
+
+### 关于 root 的结论
+
+试过用 root 做两件事，都做不到，记录在这里免得以后重复：
+
+1. **静默授权。** KernelSU 的授权记录在 `/data/adb/ksu/.allowlist`（`0x7F4B5355` 开头，
+   v4，每条 784 字节：包名 128 + uid + 标志位）。手工写入了 TextGrab 的条目，
+   运行时被内核改回原样 —— 该文件有完整性校验。
+2. **自动开无障碍。** 无障碍列表由 `enabled_accessibility_services` 控制，
+   只有 root 或 system 身份能写。普通应用两样都没有。
+
+因此保活方案走前台服务，不依赖 root。
+
+### 已知限制
+
+- **覆盖安装会清空无障碍服务列表**，系统行为。装完新版要重新开关一次
+- 截屏只拿当前应用的窗口，悬浮窗和状态栏不在其内

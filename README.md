@@ -1,122 +1,128 @@
-# TextGrab
+# TextGrab 中文版
 
-[![Download APK](https://img.shields.io/github/v/release/notune/TextGrab?label=Download%20APK&color=2563EB)](https://github.com/notune/TextGrab/releases/latest)
-[![Get it on Obtainium](https://img.shields.io/badge/Get%20it%20on-Obtainium-1B2734)](https://apps.obtainium.page/redirect?r=obtainium://add/https%3A%2F%2Fgithub.com%2Fnotune%2FTextGrab)
+在任意界面上划选文字并复制。基于 [notune/TextGrab](https://github.com/notune/TextGrab)（MIT），
+针对中文、ColorOS 与日常使用场景做了大量改造。
 
-Select and copy text from any image on de-googled Android (GrapheneOS,
-CalyxOS, LineageOS, ...). Works like iOS Live Text or the text selection on
-Pixel phones, but fully local and without Google Play services.
+**本仓库：** <https://github.com/Cakee007/TextGrab-zh>
+**上游原版：** <https://github.com/notune/TextGrab>
 
-## How to use
+---
 
-**Main workflow, from anything on your screen to copied text in seconds:**
+## 怎么用
 
-1. Swipe down and tap the **OCR screenshot** tile
-2. Tap or drag over the text, then copy
+从任何界面到剪贴板，两步：
 
-One-time setup: open quick settings, tap the edit (pencil) button and drag
-the **OCR screenshot** tile into your tiles. Then enable instant capture via
-the button on the app's home screen, so the tile can take the screenshot by
-itself (Android 12+, uses a screenshot-only accessibility service that reads
-no screen content). Without instant capture, take a screenshot first and the
-tile opens it.
+1. 下拉状态栏，点「**截屏识字**」磁贴
+2. 在图上点选或拖动划选，然后复制
 
-**Second workflow, for existing images:**
+一次性设置：编辑快捷设置面板，把「截屏识字」拖进磁贴区。首次使用需要开启
+「一步截屏」无障碍服务，磁贴才能自己截屏。
 
-Share any image from any app (gallery, browser, messenger) to **TextGrab**
-and the text is selectable. Opening image files with TextGrab from a file
-manager works too, as does picking an image from the app's home screen.
+另一条路径：在相册、浏览器、聊天软件里把图片「分享」给 TextGrab，
+或者从应用首页选图，同样可以划选文字。
 
-## Screenshots
+---
 
-| Tap a word | Long-press and drag | Full text view |
+## 相比上游改了什么
+
+### 一、截屏流程（核心变化）
+
+| 环节 | 上游做法 | 现在的做法 |
 |---|---|---|
-| ![Select a word](screenshots/select_word.png) | ![Sweep selection](screenshots/sweep_selection.png) | ![Text view](screenshots/text_view.png) |
+| 控制中心收回 | 无处理，截到的画面里常带下拉面板 | 透明 Activity 抢焦点，逼控制中心收起 |
+| 截屏时机 | 固定延时 | 每 40 ms 取一帧，连续两帧差异 < 1 % 才认定画面稳定 |
+| 上一次界面残留 | 出现「套娃」 | 序列开头发 `ACTION_DISMISS`，让旧界面自行退出 |
+| 截屏能力 | 通过无障碍截屏 | 同左，但只截当前应用窗口（`takeScreenshotOfWindow`），不截整屏 |
 
-## How it works
+这三个坑在 ColorOS 上尤其明显：
 
-The app bundles Google's ML Kit **on-device** text recognizer, the same class
-of neural model that powers Pixel Live Text. The model is packaged inside the
-APK, so recognition:
+- **控制中心窗口收回后不会从窗口列表消失**，`mViewVisibility=0x4` 但类型仍是
+  `TYPE_SYSTEM`，边界和激活状态也不变。因此窗口状态完全不可信，只能靠像素判断。
+- **只有透明 Activity 能抢回焦点**，其他手段（`releaseInstance`、调整焦点标志、
+  发送按键）在 ColorOS 上全部失效。
+- **旧界面留在前台**会导致下一次截屏把上一次的界面截进去，形成层层嵌套。
 
-- runs entirely on the device. The app has **no internet permission**.
-- needs **no Google Play services** and works on GrapheneOS out of the box.
-- is fast: typically well under a second per screenshot on real hardware.
+### 二、识别精度
 
-## Supported languages
+上游只装拉丁模型。中文场景下读汉字可以，读数字和英文很差。现在：
 
-All Latin-script languages, including:
+- **中文 + 拉丁双模型并行**，同一张图跑两遍，按行择优
+- 含汉字的行走中文模型，纯数字/字母/符号的行比较两边置信度取优
+- 按行重叠度（> 0.5）匹配两个模型的结果，再按索引遍历合并，
+  避免重复匹配
+- 长边超过 2048 时先做双线性缩放再送模型，识别完把几何坐标映射回原图。
+  **不缩放的话长截图会被模型内部降采样，整行丢失**
 
-English, German, French, Spanish, Italian, Portuguese, Dutch, Polish, Czech,
-Danish, Swedish, Norwegian, Finnish, Hungarian, Romanian, Turkish, Croatian,
-Slovak, Slovenian, Estonian, Latvian, Lithuanian, Albanian, Catalan, Basque,
-Galician, Icelandic, Irish, Maltese, Swahili, Tagalog, Vietnamese (partial,
-some diacritics may be missed) and more, plus digits and common punctuation.
+划选逻辑保持上游的**纯视觉方案**，没有改动。
 
-Chinese, Japanese, Korean and Devanagari need separate ML Kit model packs
-(roughly 20 MB each). They are not included yet but are easy to add. Open an
-issue if you want one of them.
+### 三、中文界面
 
-## Building
+- `values/strings.xml` 直接写成中文，不依赖系统语言匹配 `zh-rCN`
+  （否则系统语言没对上时会回退到英文）
+- 磁贴名称、无障碍服务名称改成中文字面量直接写进 manifest。
+  R8 资源压缩会在编译期内联 label，用资源引用会变成英文
 
-```sh
+### 四、后台保活
+
+ColorOS 会冻结闲置应用，冻结时无障碍绑定一起掉线——这就是「隔久了要重新开权限」的根因。
+
+`KeepAliveService` 是一个 `specialUse` 类型的前台服务，在无障碍服务连上时启动，
+显示一条最小重要性的静音通知：
+
+- 没有定时器、没有 wakelock、没有网络、没有轮询
+- 作用只是把进程标记为免冻结
+- 实测功耗在每天 1–3 mAh 量级
+
+### 五、退出清理
+
+- 磁贴截的图**从不写入相册**，只在内存里。退出时释放位图，不留文件
+- 在应用内打开的相册截图会登记下来，完全退出时通过 MediaStore 删除，
+  Android 11+ 上进入 30 天回收站而不是直接抹掉
+- 用 `isFinishing` 判断，切换应用或换图不会误删
+
+### 六、其他
+
+- 移除上游的分享入口与网络相关权限（识别完全离线）
+- 移除仅供脚本测试的 `DebugCaptureReceiver` 及其自定义权限
+- 版本号：`versionCode 5` / `1.4-zh`
+- applicationId 改为 `dev.noah.textgrab.zh`，可与原版共存
+
+---
+
+## 构建
+
+本地需要 JDK 17 和 Android SDK：
+
+```bash
 ./gradlew assembleRelease
 ```
 
-Output: `app/build/outputs/apk/release/app-release.apk`.
+签名信息从环境变量读取（见 `app/build.gradle.kts`）：
 
-To build a signed release, create a keystore and put its credentials in
-`keystore/keystore.properties` (this directory is gitignored):
-
-```properties
-storeFile=keystore/your-release.jks
-storePassword=...
-keyAlias=...
-keyPassword=...
+```bash
+export TG_STORE_FILE=/path/to/release.jks
+export TG_STORE_PASSWORD=...
+export TG_KEY_ALIAS=...
+export TG_KEY_PASSWORD=...
 ```
 
-Without that file the release build is unsigned. Keep your keystore safe:
-updates must be signed with the same key.
+### 云端构建
 
-## Installing with Obtainium
+推送到 `main` 后由 GitHub Actions 自动构建，产物在 Actions 的 Artifacts 里。
+工作流见 `.github/workflows/build.yml`。
 
-Tap the Obtainium badge above on your phone (or add
-`https://github.com/notune/TextGrab` as an app source in
-[Obtainium](https://github.com/ImranR98/Obtainium)) to install TextGrab and
-get updates straight from this repo's releases.
+---
 
-## Verifying the APK
+## 已知限制
 
-Release APKs are signed with this certificate (package + SHA-256, ready to
-paste into [AppVerifier](https://github.com/soupslurpr/AppVerifier)):
+- **覆盖安装会清空无障碍服务列表**，系统行为，装完新版要重新开关一次
+- 截屏只能拿到当前应用的窗口，悬浮窗、状态栏不在其内
+- 首次授权无障碍后，磁贴才能自己截屏；未授权时只能打开已有截图
 
-```
-dev.noah.textgrab
-AB:C4:BB:AE:C5:6F:D3:DB:AB:AC:C8:62:D0:B4:5D:29:3B:53:CC:40:BF:67:D7:25:3B:3E:1B:7D:2D:48:0C:31
-```
+---
 
-On a computer you can check a downloaded APK with:
+## 许可证
 
-```sh
-apksigner verify --print-certs TextGrab.apk
-```
+MIT，与上游一致。原始的 `LICENSE` 文件保留在本仓库中。
 
-After the first install, Android itself rejects any update that is not
-signed with the same key.
-
-## Notes
-
-- `minSdk 26` (Android 8.0), `targetSdk 36`.
-- The APK is ~43 MB; ~30 MB of that is the bundled recognition model.
-- Photo permission is only requested for the "latest screenshot" feature.
-  Images opened via share or the picker need no permission at all.
-
-## License
-
-The app source code is licensed under the [MIT License](LICENSE).
-
-The bundled ML Kit text recognition SDK and its model are proprietary Google
-software, used and redistributed under the
-[ML Kit Terms of Service](https://developers.google.com/ml-kit/terms). They
-are pulled from Google's Maven repository at build time and are not part of
-this repository.
+原项目：<https://github.com/notune/TextGrab>
